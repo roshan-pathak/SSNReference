@@ -7,12 +7,10 @@ from scipy.ndimage import rotate
 from scipy.interpolate import griddata
 import json
 import plotly.express as px
-from pathlib import Path
 from sklearn.cluster import DBSCAN
 from scipy.stats import pearsonr
 from skimage.feature import hog
 import seaborn as sns
-from google.colab import files
 
 class SSNRCalculator:
     """Calculates Spectral Signal-to-Noise Ratio for cryo-EM data"""
