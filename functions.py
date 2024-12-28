@@ -214,6 +214,8 @@ class DataParser:
         self.particle_assignments = None
         self.n_classes = None
         self.class_particles = {}
+        self.full_cs_data = None
+        self.particle_id_field = None
 
     def parse_mrc(self, mrc_path):
         """Parse 2D class averages from MRC file"""
@@ -239,36 +241,27 @@ class DataParser:
             Dictionary mapping class IDs to lists of particle indices
         """
         # Load CS file as numpy structured array
-        data = np.load(cs_path)
+        self.full_cs_data = np.load(cs_path, allow_pickle=True)
 
-        # Print available fields for debugging
-        print("Available fields in CS file:", data.dtype.names)
+        # Determine particle ID field
+        self.particle_id_field = self.get_particle_id_field()
+
+        if self.particle_id_field is None:
+            raise ValueError("Particle ID field not found in CS file.")
 
         # Extract class assignments
-        # Note: Field names might need adjustment based on your CS file structure
         try:
-            # Try different possible field names for class assignments
-            if 'class' in data.dtype.names:
-                class_assignments = data['class']
-            elif 'class_id' in data.dtype.names:
-                class_assignments = data['class_id']
-            elif 'alignments2D/class' in data.dtype.names:
-                class_assignments = data['alignments2D/class']
-            else:
-                raise KeyError("Could not find class assignment field in CS file")
+            class_assignments = self.full_cs_data['class']
+        except KeyError:
+            try:
+                class_assignments = self.full_cs_data['class_id']
+            except KeyError:
+                try:
+                    class_assignments = self.full_cs_data['alignments2D/class']
+                except KeyError:
+                    raise KeyError("Could not find class assignment field in CS file.")
 
-            # Try different possible field names for particle IDs
-            if 'particle_id' in data.dtype.names:
-                particle_ids = data['particle_id']
-            elif 'uid' in data.dtype.names:
-                particle_ids = data['uid']
-            else:
-                # If no explicit particle IDs, use array indices
-                particle_ids = np.arange(len(class_assignments))
-
-        except KeyError as e:
-            print("Available fields:", data.dtype.names)
-            raise KeyError(f"Error accessing fields in CS file: {e}")
+        particle_ids = self.full_cs_data[self.particle_id_field]
 
         self.particle_assignments = {pid: cid for pid, cid in zip(particle_ids, class_assignments)}
 
@@ -280,6 +273,14 @@ class DataParser:
             self.class_particles[cid].append(pid)
 
         return self.class_particles
+
+    def get_particle_id_field(self):
+        """Determine the particle ID field in the CS file"""
+        possible_fields = ['particle_id', 'uid']
+        for field in possible_fields:
+            if field in self.full_cs_data.dtype.names:
+                return field
+        return None
 
     def get_class_particles(self, class_id):
         """Get list of particles for a specific class"""
@@ -298,6 +299,33 @@ class DataParser:
             print("\nClass distribution:")
             for class_id, particles in self.class_particles.items():
                 print(f"Class {class_id}: {len(particles)} particles")
+
+    def export_to_star(self, original_cs_path, particle_ids, output_star_path):
+        """Export selected particles to a .star file"""
+        if self.full_cs_data is None:
+            self.parse_cs_file(original_cs_path)
+        
+        # Extract fields
+        field_names = self.full_cs_data.dtype.names
+        data_to_export = {field: self.full_cs_data[field] for field in field_names}
+
+        # Create mask for selected particles
+        mask = np.isin(data_to_export[self.particle_id_field], particle_ids)
+
+        # Filter data
+        exported_data = {field: data_to_export[field][mask] for field in field_names}
+
+        # Write to .star file
+        with open(output_star_path, 'w') as f:
+            f.write("data_\n\n")
+            f.write("loop_\n")
+            for i, field in enumerate(field_names, start=1):
+                f.write(f"_{field} #{i}\n")
+            f.write("\n")
+            num_entries = len(exported_data[field_names[0]])
+            for j in range(num_entries):
+                row = ' '.join(str(exported_data[field][j]) for field in field_names)
+                f.write(f"{row}\n")
 
 class ScoreCalculator:
     """Calculates various scores for 2D classes"""
